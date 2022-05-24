@@ -1,0 +1,178 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test-task
+
+# Application part
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-task-web-app
+  namespace: test-task
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web-app
+    spec:
+      containers:
+      - name: web-app
+        image: dymov/web_app:1.0.0
+        ports:
+        - containerPort: 8080
+        env:
+        - name: REDIS_ADDR
+          value: "test-task-redis:6379"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-task-app
+  namespace: test-task
+spec:
+  selector:
+    app.kubernetes.io/name: web-app
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-task-app-ingress
+  namespace: test-task
+spec:
+  rules:
+    - host: test-task.info
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: test-task-app
+                port:
+                  number: 80
+
+# Redis part
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-task-redis
+  namespace: test-task
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-app
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.0.0
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-task-redis
+  namespace: test-task
+spec:
+  selector:
+    app.kubernetes.io/name: redis-app
+  ports:
+    - port: 6379
+      targetPort: 6379
+
+#Monitoring part
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-task-monitoring
+  namespace: test-task
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mon
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mon
+    spec:
+      containers:
+      - name: monitoring
+        image: dymov/mon_app:1.0.0
+        ports:
+        - containerPort: 8000
+        env:
+        - name: REDIS_ADDR
+          value: "test-task-redis:6379"
+        - name: APP_ADDR
+          value: "test-task-app:80"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-task-mon
+  namespace: test-task
+  labels:
+    app: prometheus-dymov-test
+    release: prometheus
+spec:
+  selector:
+    app.kubernetes.io/name: mon
+  ports:
+    - name: web
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: test-task
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: prometheus-dymov-test
+      release: prometheus
+  namespaceSelector:
+    any: true
+  endpoints:
+    - port: web
+      scheme: http
+      interval: 1s
+      path: /
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-task-mon-ingress
+  namespace: test-task
+spec:
+  rules:
+    - host: test-task-mon.info
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: test-task-mon
+                port:
+                  number: 8000
